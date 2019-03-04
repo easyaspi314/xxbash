@@ -25,7 +25,8 @@ Don't.
 
 Ok, this is how you use it:
 ```
-./xxhsum.sh [FILE] (defaults to xxhash.sh)
+./xxhsum.sh [-H0|-H1] [FILES...] (defaults to xxhash.sh)
+-H0: XXH32, -H1: XXH64 (default)
 
 . xxhash.sh
 XXH32 "file in hex, no spaces or prefix" "seed"
