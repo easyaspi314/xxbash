@@ -149,6 +149,7 @@ XXH64()
     if [ $# -ge 2 ]; then
         seed=$2
     fi
+    local inp="                                                                 "
     local -i tmp=0
     local -i zero=0
     local -i h64=0
@@ -165,14 +166,12 @@ XXH64()
 
         dnl tight loop, no whitespace
         while [ $offset -le $bEnd ]; do
-            XXH64_round(v1, swap(0x${input:$offset:16}))
-            ((offset+=16))
-            XXH64_round(v2,swap(0x${input:$offset:16}))
-            ((offset+=16))
-            XXH64_round(v3,swap(0x${input:$offset:16}))
-            ((offset+=16))
-            XXH64_round(v4,swap(0x${input:$offset:16}))
-            ((offset+=16))
+            inp="${input:$offset:64}"
+            XXH64_round(v1, swap(0x${inp:0:16}))
+            XXH64_round(v2,swap(0x${inp:16:16}))
+            XXH64_round(v3,swap(0x${inp:32:16}))
+            XXH64_round(v4,swap(0x${inp:48:16}))
+            ((offset+=64))
         done
 
         h64=$(( (XXH_rotl64(v1, 1)) + (XXH_rotl64(v2, 7)) + (XXH_rotl64(v3, 12)) + (XXH_rotl64(v4, 18)) ))
@@ -261,14 +260,12 @@ XXH32()
         local -i v4=$(( (seed - PRIME32_1) & 0xFFFFFFFF ))
 
         while [ $offset -le $bEnd ]; do
-            XXH32_round(v1, swap32(0x${input:$offset:8}))
-            ((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}))
-            ((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}))
-            ((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}))
-            ((offset+=8))
+            local inp="${input:$offset:32}"
+            XXH32_round(v1, swap32(0x${inp:0:8}))
+            XXH32_round(v2, swap32(0x${inp:8:8}))
+            XXH32_round(v3, swap32(0x${inp:16:8}))
+            XXH32_round(v4, swap32(0x${inp:24:8}))
+            ((offset+=32))
         done
 
         h32=$(( XXH_rotl32(v1, 1) & 0xFFFFFFFF ))
