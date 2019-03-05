@@ -83,26 +83,27 @@
 # - Maybe we should use functions, idk.
 #########################################################################
 
-# This is an m4 script. This inlines everything. Maybe functions are faster,
-# idk.
+# This is an m4 script. This inlines everything.
+# Note that whitespace is left out in some loops as it slows down bash.
 
 # Good practice.
 set -euo pipefail
 
 # Bash uses signed arithmetic, so shifting right is wonk.
-define(ushr, ( ( ($1) >> ($2)) & ~( ( (0x1 << 63) >> ($2) )  << 1) ))
+define(ushr_impl,(($1>>($2))&$3))
+define(ushr,ushr_impl($1,$2,(~(((1<<63)>>($2))<<1))))
 
 # Bash reads files in big endian.
 define(swap,$(( \
-            ( ( (tmp=$1) << 56) & 0xff00000000000000) | \
-            ( (tmp << 40) & 0x00ff000000000000) | \
-            ( (tmp << 24) & 0x0000ff0000000000) | \
-            ( (tmp << 8)  & 0x000000ff00000000) | \
-            ( (ushr(tmp, 8))  & 0x00000000ff000000) | \
-            ( (ushr(tmp, 24)) & 0x0000000000ff0000) | \
-            ( (ushr(tmp, 40)) & 0x000000000000ff00) | \
-            ( (ushr(tmp, 56)) & 0x00000000000000ff) \
-    )) \
+    (((tmp=$1)<<56)&(255<<56))|\
+    ((tmp<<40)&(255<<48))|\
+    ((tmp<<24)&(255<<40))|\
+    ((tmp<<8)&(255<<32))|\
+    ((ushr(tmp,8))&(255<<24))|\
+    ((ushr(tmp,24))&(255<<16))|\
+    ((ushr(tmp,40))&(255<<8))|\
+    ((ushr(tmp,56))&255)\
+)) \
 )
 define(swap32,$(( \
 ( ( (tmp=$1) << 24) & 0xff000000 ) | \
@@ -116,33 +117,33 @@ define(swap32,$(( \
 define(XXH64_mergeRound,
     zero=0
     XXH64_round(zero, $2)
-    : $(( $1 ^= zero ))
-    : $(( $1 *= PRIME64_1 ))
-    : $(( $1 += PRIME64_4 ))
+    $1=$(( (($1 ^ zero) * PRIME64_1) + PRIME64_4 ))
 )
-define(XXH_rotl64, ( ( ($1) << ($2)) | (ushr($1, (64 - ($2)))) ) )
-define(XXH_rotl32, ( ( ( ($1) << ($2)) | (($1 >> (32 - ($2)))) )) & 0xFFFFFFFF  )
-define(XXH64_round,
-    : $(( $1 += ( ($2) * PRIME64_2) ));
-    $1=$(( XXH_rotl64($1, 31) ))
-    : $(( $1 *= PRIME64_1 ))
-)
+define(XXH_rotl64,(($1<<$2)|(ushr($1,(64-$2)))))
+define(XXH_rotl32,(((($1)<<($2))|(($1>>(32-$2)))))&0xFFFFFFFF)
+
+dnl calculate the right shift magic beforehand
+define(XXH64_round,(($1+=(($2)*PRIME64_2)));$1=$(((($1<<31)|ushr_impl($1,33,0x7fffffff) )*PRIME64_1)))
 define(XXH64_avalanche,
-    : $(( h64 ^= ushr(h64, 33) ))
-    : $(( h64 *= PRIME64_2 ))
-    : $(( h64 ^= ushr(h64, 29) ))
-    : $(( h64 *= PRIME64_3 ))
-    : $(( h64 ^= ushr(h64, 32) ))
+    (( h64 ^= ushr(h64, 33) ))
+    (( h64 *= PRIME64_2 ))
+    (( h64 ^= ushr(h64, 29) ))
+    (( h64 *= PRIME64_3 ))
+    (( h64 ^= ushr(h64, 32) ))
 )
 
 # uint64_t XXH64(text_in_hex, seed = 0)
 XXH64()
 {
+    dnl Performance is multiplied by 8-10x if we switch to C locale.
+    local OLD_LC_ALL="${LC_ALL:-}"
+    export LC_ALL="C"
+
     local -i PRIME64_1=0x9E3779B185EBCA87
-    local -i PRIME64_2=-4417276706812531889
-    local -i PRIME64_3=1609587929392839161
-    local -i PRIME64_4=-8796714831421723037
-    local -i PRIME64_5=2870177450012600261
+    local -i PRIME64_2=0xC2B2AE3D27D4EB4F
+    local -i PRIME64_3=0x165667B19E3779F9
+    local -i PRIME64_4=0x85EBCA77C2B2AE63
+    local -i PRIME64_5=0x27D4EB2F165667C5
 
     local -i seed=0
     if [ $# -ge 2 ]; then
@@ -161,51 +162,17 @@ XXH64()
         local -i v2=$(( seed + PRIME64_2 ))
         local -i v3=$(( seed ))
         local -i v4=$(( seed - PRIME64_1 ))
-        # unroll because bash is slow
-        while [ $remaining -ge 128 ]; do
-            XXH64_round(v1, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v2, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v3, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v4, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v1, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v2, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v3, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v4, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v1, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v2, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v3, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v4, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v1, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v2, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v3, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v4, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            : $((remaining-=128))
-        done
+
+        dnl tight loop, no whitespace
         while [ $offset -le $bEnd ]; do
-            XXH64_round(v1, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v2, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v3, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
-            XXH64_round(v4, swap(0x${input:$offset:16}) )
-            : $((offset+=16))
+            XXH64_round(v1, swap(0x${input:$offset:16}))
+            ((offset+=16))
+            XXH64_round(v2,swap(0x${input:$offset:16}))
+            ((offset+=16))
+            XXH64_round(v3,swap(0x${input:$offset:16}))
+            ((offset+=16))
+            XXH64_round(v4,swap(0x${input:$offset:16}))
+            ((offset+=16))
         done
 
         h64=$(( (XXH_rotl64(v1, 1)) + (XXH_rotl64(v2, 7)) + (XXH_rotl64(v3, 12)) + (XXH_rotl64(v4, 18)) ))
@@ -218,36 +185,41 @@ XXH64()
         h64=$((seed + PRIME64_5));
     fi
     remaining=$(( ${#input} - offset ))
-    : $((h64 += len))
+    ((h64 += len))
     while [ $remaining -ge 16 ]; do
 	local -i k1=0
         XXH64_round(k1, swap(0x${input:$offset:16}))
-        : $(( offset += 16 ))
+        (( offset += 16 ))
         h64=$(( h64 ^ k1 ));
         h64=$(( (XXH_rotl64(h64, 27) * PRIME64_1) + PRIME64_4 ));
-        : $((remaining -= 16 ));
+        ((remaining -= 16 ));
     done
     if [ $remaining -ge 8 ]; then
-        : $(( h64 ^= (swap32(0x00000000${input:$offset:8}) * PRIME64_1) ))
-        : $(( offset += 8 ))
+        (( h64 ^= (swap32(0x00000000${input:$offset:8}) * PRIME64_1) ))
+        (( offset += 8 ))
         h64=$(( (XXH_rotl64(h64, 23) * PRIME64_2) + PRIME64_3 ))
-        : $((remaining-=8))
+        ((remaining-=8))
     fi
     while [ $remaining -gt 0 ]; do
-        : $(( h64 ^= (0x${input:$offset:2} * PRIME64_5) ))
-        : $(( offset += 2 ))
+        (( h64 ^= (0x${input:$offset:2} * PRIME64_5) ))
+        (( offset += 2 ))
         h64=$(( XXH_rotl64(h64, 11) * PRIME64_1 ))
-        : $((remaining-=2))
+        ((remaining-=2))
     done
     XXH64_avalanche
+
+    # Reset LC_ALL.
+    if [ -n "$OLD_LC_ALL"]; then
+        export LC_ALL="$OLD_LC_ALL"
+    else
+        unset LC_ALL
+    fi
     printf "%016x" $h64
 }
 
 # I would kill for 32-bit integers right now.
-define(XXH32_round,
-    $1=$(( ($1 + ( ( ($2) * PRIME32_2) & 0xFFFFFFFF)) & 0xFFFFFFFF ));
-    $1=$(( XXH_rotl32($1, 13)  ))
-    $1=$(( ($1 * PRIME32_1) & 0xFFFFFFFF ))
+define(XXH32_round,$1=$(((($1+(($2*PRIME32_2) & 0xFFFFFFFF)) & 0xFFFFFFFF) ));
+    $1=$(( ((XXH_rotl32($1,13)&0xFFFFFFFF)*PRIME32_1) & 0xFFFFFFFF ))
 )
 define(XXH32_avalanche,
     h32=$(( (h32 ^ (ushr(h32, 15) & 0xFFFFFFFF) )& 0xFFFFFFFF ))
@@ -260,6 +232,10 @@ define(XXH32_avalanche,
 # uint32_t XXH32(data, seed = 0)
 XXH32()
 {
+    # Performance is multiplied by eightfold if we switch to C locale.
+    local OLD_LC_ALL="${LC_ALL:-}"
+    export LC_ALL="C"
+
     local -i PRIME32_1=2654435761
     local -i PRIME32_2=2246822519
     local -i PRIME32_3=3266489917
@@ -282,53 +258,19 @@ XXH32()
         local -i v1=$(( ( ( (seed + PRIME32_1) & 0xFFFFFFFF) + PRIME32_2) & 0xFFFFFFFF ))
         local -i v2=$(( (seed + PRIME32_2) & 0xFFFFFFFF ))
         local -i v3=$(( seed ))
-        local -i v4=$(( (seed - PRIME32_1) % 0x100000000  ))
-        # unroll because bash is slow
-        while [ $remaining -ge 64 ]; do
-            XXH32_round(v1, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v1, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v1, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v1, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            : $((remaining-=64))
-        done
+        local -i v4=$(( (seed - PRIME32_1) & 0xFFFFFFFF ))
+
         while [ $offset -le $bEnd ]; do
-            XXH32_round(v1, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v2, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v3, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
-            XXH32_round(v4, swap32(0x${input:$offset:8}) )
-            : $((offset+=8))
+            XXH32_round(v1, swap32(0x${input:$offset:8}))
+            ((offset+=8))
+            XXH32_round(v2, swap32(0x${input:$offset:8}))
+            ((offset+=8))
+            XXH32_round(v3, swap32(0x${input:$offset:8}))
+            ((offset+=8))
+            XXH32_round(v4, swap32(0x${input:$offset:8}))
+            ((offset+=8))
         done
+
         h32=$(( XXH_rotl32(v1, 1) & 0xFFFFFFFF ))
         h32=$(( (h32 + (XXH_rotl32(v2, 7) ))  & 0xFFFFFFFF ))
         h32=$(( (h32 + (XXH_rotl32(v3, 12) )) & 0xFFFFFFFF ))
@@ -340,17 +282,25 @@ XXH32()
     h32=$(( (h32 + (len & 0xFFFFFFFF))  & 0xFFFFFFFF ))
     while [ $remaining -ge 8 ]; do
         h32=$(( (h32 + ( ( swap32(0x${input:$offset:8}) * PRIME32_3) & 0xFFFFFFFF)) & 0xFFFFFFFF ))
-        : $(( offset += 8 ))
+        (( offset += 8 ))
         h32=$(( ((XXH_rotl32(h32, 17) & 0xFFFFFFFF) * PRIME32_4) & 0xFFFFFFFF ))
-        : $((remaining-=8))
+        ((remaining-=8))
     done
 
     while [ $remaining -gt 0 ]; do
         h32=$(( (h32 + ( (0x${input:$offset:2} * PRIME32_5) & 0xFFFFFFFF) ) & 0xFFFFFFFF))
-        : $(( offset += 2 ))
+        (( offset += 2 ))
         h32=$(( ((XXH_rotl32(h32, 11) & 0xFFFFFFFF) * PRIME32_1) & 0xFFFFFFFF ))
-        : $((remaining-=2))
+        ((remaining-=2))
     done
     XXH32_avalanche
+
+    # Reset LC_ALL.
+    if [ -n "$OLD_LC_ALL"]; then
+        export LC_ALL="$OLD_LC_ALL"
+    else
+        unset LC_ALL
+    fi
+
     printf "%08x" $h32
 }
